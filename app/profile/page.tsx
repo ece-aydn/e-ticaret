@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "../contexts/AuthContext";
 import { useTheme } from "../components/ThemeProvider";
+import { supabase } from "../lib/supabase";
 
 export default function ProfilePage() {
   const { user, logout, isLoading } = useAuth();
@@ -13,6 +14,7 @@ export default function ProfilePage() {
   const [isEditing, setIsEditing] = useState(false);
   const [formData, setFormData] = useState({
     name: "",
+    surname: "",
     email: "",
     phone: "",
     bio: "",
@@ -33,6 +35,65 @@ export default function ProfilePage() {
   const containerRef = useRef<HTMLDivElement>(null);
   const [cropInImageCoords, setCropInImageCoords] = useState<{ x: number; y: number; size: number } | null>(null);
 
+  const loadProfile = useCallback(async () => {
+    if (!user) return;
+
+    try {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", user.id)
+        .single();
+
+      if (error) {
+        console.error("Profil yükleme hatası:", error);
+        // Hata durumunda varsayılan değerler
+        setFormData({
+          name: user.name,
+          email: user.email,
+          phone: "",
+          bio: "",
+          location: "",
+          skills: [],
+          website: "",
+        });
+        return;
+      }
+
+      if (data) {
+        setFormData({
+          name: data.name || user.name,
+          surname: data.surname || "",
+          email: data.email || user.email,
+          phone: data.phone || "",
+          bio: data.bio || "",
+          location: data.location || "",
+          skills: data.skills || [],
+          website: data.website || "",
+        });
+
+        // Profil fotoğrafını yükle
+        if (data.profile_image_url) {
+          setProfileImage(data.profile_image_url);
+          setImagePreview(data.profile_image_url);
+        }
+      }
+    } catch (error) {
+      console.error("Profil yükleme hatası:", error);
+      // Hata durumunda varsayılan değerler
+      setFormData({
+        name: user.name,
+        surname: "",
+        email: user.email,
+        phone: "",
+        bio: "",
+        location: "",
+        skills: [],
+        website: "",
+      });
+    }
+  }, [user]);
+
   useEffect(() => {
     // Kullanıcı yüklenene kadar bekle
     if (isLoading) return;
@@ -43,28 +104,9 @@ export default function ProfilePage() {
       return;
     }
 
-    // Mock kullanıcı verilerini yükle
-    setFormData({
-      name: user.name,
-      email: user.email,
-      phone: "",
-      bio: user.role === "student" 
-        ? "Bilgisayar Mühendisliği öğrencisiyim. Web geliştirme ve mobil uygulama geliştirme konularında deneyimliyim."
-        : "Teknoloji sektöründe faaliyet gösteren bir şirketiz. Öğrencilere staj ve iş imkanları sunuyoruz.",
-      location: user.role === "student" ? "İstanbul, Türkiye" : "Ankara, Türkiye",
-      skills: user.role === "student" 
-        ? ["React", "TypeScript", "Node.js", "Python"]
-        : ["Yazılım Geliştirme", "Staj Programları", "Mentorluk"],
-      website: user.role === "company" ? "https://www.example.com" : "",
-    });
-
-    // Kaydedilmiş profil fotoğrafını yükle
-    const savedImage = localStorage.getItem(`profileImage_${user.id}`);
-    if (savedImage) {
-      setProfileImage(savedImage);
-      setImagePreview(savedImage);
-    }
-  }, [user, router]);
+    // Supabase'den profil bilgilerini yükle
+    loadProfile();
+  }, [user, isLoading, router, loadProfile]);
 
   // Yükleniyor veya kullanıcı yoksa loading göster
   if (isLoading || !user) {
@@ -78,21 +120,75 @@ export default function ProfilePage() {
     );
   }
 
-  const handleSave = () => {
-    // Mock kaydetme - gerçekte API çağrısı yapılacak
-    const savedData = localStorage.getItem("profileData");
-    const profiles = savedData ? JSON.parse(savedData) : {};
-    profiles[user.id] = formData;
-    localStorage.setItem("profileData", JSON.stringify(profiles));
-    
-    // Profil fotoğrafını kaydet
-    if (imagePreview) {
-      localStorage.setItem(`profileImage_${user.id}`, imagePreview);
-      setProfileImage(imagePreview);
+  const handleSave = async () => {
+    if (!user) return;
+
+    try {
+      // Profil fotoğrafını Supabase Storage'a yükle (eğer varsa)
+      let profileImageUrl = profileImage;
+      
+      if (imagePreview && imagePreview !== profileImage) {
+        // Base64'ü blob'a çevir
+        const response = await fetch(imagePreview);
+        const blob = await response.blob();
+        
+        // Dosya adı oluştur
+        const fileExt = imagePreview.split(';')[0].split('/')[1];
+        const fileName = `${user.id}-${Date.now()}.${fileExt}`;
+        
+        // Supabase Storage'a yükle
+        const { data: uploadData, error: uploadError } = await supabase.storage
+          .from('profile-images')
+          .upload(fileName, blob, {
+            contentType: `image/${fileExt}`,
+            upsert: true,
+          });
+
+        if (uploadError) {
+          console.error("Fotoğraf yükleme hatası:", uploadError);
+        } else {
+          // Public URL'i al
+          const { data: urlData } = supabase.storage
+            .from('profile-images')
+            .getPublicUrl(fileName);
+          
+          profileImageUrl = urlData.publicUrl;
+        }
+      }
+
+      // Profil bilgilerini güncelle
+      const { error } = await supabase
+        .from("profiles")
+        .update({
+          name: formData.name,
+          surname: formData.surname || null,
+          phone: formData.phone,
+          bio: formData.bio,
+          location: formData.location,
+          skills: formData.skills,
+          website: formData.website,
+          profile_image_url: profileImageUrl,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", user.id);
+
+      if (error) {
+        console.error("Profil güncelleme hatası:", error);
+        alert("Profil güncellenirken bir hata oluştu!");
+        return;
+      }
+
+      // Başarılı güncelleme
+      if (profileImageUrl) {
+        setProfileImage(profileImageUrl);
+      }
+      
+      setIsEditing(false);
+      alert("Profil başarıyla güncellendi!");
+    } catch (error) {
+      console.error("Profil kaydetme hatası:", error);
+      alert("Profil kaydedilirken bir hata oluştu!");
     }
-    
-    setIsEditing(false);
-    alert("Profil başarıyla güncellendi!");
   };
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -457,20 +553,102 @@ export default function ProfilePage() {
     });
   };
 
-  // Mock istatistikler
-  const stats = user.role === "student"
-    ? [
-        { label: "Toplam Başvuru", value: "12", icon: "📝" },
-        { label: "Görüşme", value: "5", icon: "💼" },
-        { label: "Kabul Edilen", value: "3", icon: "✅" },
-        { label: "Profil Görüntüleme", value: "48", icon: "👁️" },
-      ]
-    : [
-        { label: "Aktif İlan", value: "8", icon: "📋" },
-        { label: "Başvuru", value: "124", icon: "📥" },
-        { label: "Değerlendirme", value: "45", icon: "⭐" },
-        { label: "İşe Alınan", value: "12", icon: "👥" },
-      ];
+  // İstatistikler state'i
+  const [stats, setStats] = useState<Array<{ label: string; value: string; icon: string }>>([]);
+
+  // İstatistikleri yükle
+  useEffect(() => {
+    if (!user) return;
+
+    const loadStats = async () => {
+      try {
+        const { data, error } = await supabase
+          .from("profiles")
+          .select(
+            user.role === "student"
+              ? "total_applications, interviews, accepted, profile_views"
+              : "active_jobs, total_applications_received, evaluations, hired"
+          )
+          .eq("id", user.id)
+          .single();
+
+        if (error) {
+          console.error("İstatistik yükleme hatası:", error);
+          // Varsayılan değerler
+          setStats(
+            user.role === "student"
+              ? [
+                  { label: "Toplam Başvuru", value: "0", icon: "📝" },
+                  { label: "Görüşme", value: "0", icon: "💼" },
+                  { label: "Kabul Edilen", value: "0", icon: "✅" },
+                  { label: "Profil Görüntüleme", value: "0", icon: "👁️" },
+                ]
+              : [
+                  { label: "Aktif İlan", value: "0", icon: "📋" },
+                  { label: "Başvuru", value: "0", icon: "📥" },
+                  { label: "Değerlendirme", value: "0", icon: "⭐" },
+                  { label: "İşe Alınan", value: "0", icon: "👥" },
+                ]
+          );
+          return;
+        }
+
+        if (data) {
+          if (user.role === "student") {
+            setStats([
+              {
+                label: "Toplam Başvuru",
+                value: String(data.total_applications || 0),
+                icon: "📝",
+              },
+              {
+                label: "Görüşme",
+                value: String(data.interviews || 0),
+                icon: "💼",
+              },
+              {
+                label: "Kabul Edilen",
+                value: String(data.accepted || 0),
+                icon: "✅",
+              },
+              {
+                label: "Profil Görüntüleme",
+                value: String(data.profile_views || 0),
+                icon: "👁️",
+              },
+            ]);
+          } else {
+            setStats([
+              {
+                label: "Aktif İlan",
+                value: String(data.active_jobs || 0),
+                icon: "📋",
+              },
+              {
+                label: "Başvuru",
+                value: String(data.total_applications_received || 0),
+                icon: "📥",
+              },
+              {
+                label: "Değerlendirme",
+                value: String(data.evaluations || 0),
+                icon: "⭐",
+              },
+              {
+                label: "İşe Alınan",
+                value: String(data.hired || 0),
+                icon: "👥",
+              },
+            ]);
+          }
+        }
+      } catch (error) {
+        console.error("İstatistik yükleme hatası:", error);
+      }
+    };
+
+    loadStats();
+  }, [user]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-slate-100 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950">
@@ -603,15 +781,29 @@ export default function ProfilePage() {
                   )}
                 </div>
                 {isEditing ? (
-                  <input
-                    type="text"
-                    value={formData.name}
-                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                    className="text-xl font-bold text-slate-900 dark:text-white bg-transparent border-b-2 border-cyan-500 dark:border-cyan-400 outline-none text-center mb-2"
-                  />
+                  <div className="space-y-2 mb-2">
+                    <input
+                      type="text"
+                      value={formData.name}
+                      onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                      placeholder="Ad"
+                      className="text-xl font-bold text-slate-900 dark:text-white bg-transparent border-b-2 border-cyan-500 dark:border-cyan-400 outline-none text-center w-full"
+                    />
+                    {user.role === "student" && (
+                      <input
+                        type="text"
+                        value={formData.surname}
+                        onChange={(e) => setFormData({ ...formData, surname: e.target.value })}
+                        placeholder="Soyad"
+                        className="text-xl font-bold text-slate-900 dark:text-white bg-transparent border-b-2 border-cyan-500 dark:border-cyan-400 outline-none text-center w-full"
+                      />
+                    )}
+                  </div>
                 ) : (
                   <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-2">
-                    {formData.name}
+                    {user.role === "student" && formData.surname
+                      ? `${formData.name} ${formData.surname}`
+                      : formData.name}
                   </h2>
                 )}
                 <p className="text-sm text-slate-600 dark:text-slate-400 mb-4">

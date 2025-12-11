@@ -1,6 +1,8 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
+import { supabase } from "../lib/supabase";
+import type { User as SupabaseUser } from "@supabase/supabase-js";
 
 export interface User {
   id: string;
@@ -12,8 +14,8 @@ export interface User {
 interface AuthContextType {
   user: User | null;
   login: (email: string, password: string) => Promise<boolean>;
-  register: (email: string, password: string, name: string, role: "student" | "company") => Promise<boolean>;
-  logout: () => void;
+  register: (email: string, password: string, name: string, surname?: string, role?: "student" | "company") => Promise<boolean>;
+  logout: () => Promise<void>;
   isLoading: boolean;
 }
 
@@ -23,77 +25,167 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
+  // Kullanıcı oturumunu kontrol et
   useEffect(() => {
-    // Sayfa yüklendiğinde localStorage'dan kullanıcı bilgisini al
-    const savedUser = localStorage.getItem("user");
-    if (savedUser) {
-      try {
-        setUser(JSON.parse(savedUser));
-      } catch (e) {
-        localStorage.removeItem("user");
+    // Mevcut oturumu kontrol et
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        loadUserProfile(session.user.id);
+      } else {
+        setIsLoading(false);
       }
-    }
-    setIsLoading(false);
+    });
+
+    // Auth state değişikliklerini dinle
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (session?.user) {
+        await loadUserProfile(session.user.id);
+        
+        // Email onaylandığında profiles tablosunu güncelle
+        if (event === 'SIGNED_IN' && session.user.email_confirmed_at) {
+          await supabase
+            .from("profiles")
+            .update({ email_confirmed: true })
+            .eq("id", session.user.id);
+        }
+      } else {
+        setUser(null);
+        setIsLoading(false);
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, []);
 
-  const login = async (email: string, password: string): Promise<boolean> => {
-    // Mock login - gerçekte API çağrısı yapılacak
-    const { validateUser } = await import("../lib/mockUsers");
-    const foundUser = validateUser(email, password);
-    
-    if (foundUser) {
-      const userData: User = {
-        id: foundUser.id,
-        email: foundUser.email,
-        name: foundUser.name,
-        role: foundUser.role,
-      };
-      setUser(userData);
-      localStorage.setItem("user", JSON.stringify(userData));
-      return true;
+  // Kullanıcı profilini yükle
+  const loadUserProfile = async (userId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("id, email, name, role")
+        .eq("id", userId)
+        .single();
+
+      if (error) {
+        console.error("Profil yükleme hatası:", error);
+        setIsLoading(false);
+        return;
+      }
+
+      if (data) {
+        setUser({
+          id: data.id,
+          email: data.email,
+          name: data.name,
+          role: data.role as "student" | "company",
+        });
+      }
+    } catch (error) {
+      console.error("Profil yükleme hatası:", error);
+    } finally {
+      setIsLoading(false);
     }
-    return false;
+  };
+
+  const login = async (email: string, password: string): Promise<boolean> => {
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+
+      if (error) {
+        console.error("Giriş hatası:", error);
+        return false;
+      }
+
+      if (data.user) {
+        await loadUserProfile(data.user.id);
+        return true;
+      }
+
+      return false;
+    } catch (error) {
+      console.error("Giriş hatası:", error);
+      return false;
+    }
   };
 
   const register = async (
     email: string,
     password: string,
     name: string,
-    role: "student" | "company"
+    surname?: string,
+    role: "student" | "company" = "student"
   ): Promise<boolean> => {
-    // Mock register - gerçekte API çağrısı yapılacak
-    const { findUserByEmail } = await import("../lib/mockUsers");
-    
-    // Email zaten kullanılıyor mu kontrol et
-    if (findUserByEmail(email)) {
+    try {
+      // Supabase Auth ile kullanıcı oluştur
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            name,
+            surname,
+            role,
+          },
+        },
+      });
+
+      if (authError) {
+        console.error("Kayıt hatası:", authError);
+        return false;
+      }
+
+      if (authData.user) {
+        // Profil tablosuna kayıt ekle
+        const profileData: any = {
+          id: authData.user.id,
+          email,
+          name,
+          role,
+          email_confirmed: authData.user.email_confirmed_at ? true : false, // Email onay durumu
+        };
+        
+        // Surname varsa ekle
+        if (surname) {
+          profileData.surname = surname;
+        }
+
+        const { error: profileError } = await supabase
+          .from("profiles")
+          .insert(profileData);
+
+        if (profileError) {
+          console.error("Profil oluşturma hatası:", profileError);
+          // Kullanıcı oluşturuldu ama profil oluşturulamadı
+          // Auth kullanıcısını sil (opsiyonel)
+          return false;
+        }
+
+        // Kullanıcı profilini yükle
+        await loadUserProfile(authData.user.id);
+        return true;
+      }
+
+      return false;
+    } catch (error) {
+      console.error("Kayıt hatası:", error);
       return false;
     }
-
-    // Yeni kullanıcı oluştur
-    const newUser: User = {
-      id: Date.now().toString(),
-      email,
-      name,
-      role,
-    };
-
-    setUser(newUser);
-    localStorage.setItem("user", JSON.stringify(newUser));
-    
-    // Mock users'a ekle (sadece bu session için)
-    const mockUsers = JSON.parse(localStorage.getItem("mockUsers") || "[]");
-    mockUsers.push({
-      ...newUser,
-      password, // Gerçek uygulamada hash'lenmiş olmalı
-    });
-    localStorage.setItem("mockUsers", JSON.stringify(mockUsers));
-    
-    return true;
   };
 
-  const logout = () => {
-    setUser(null);
-    localStorage.removeItem("user");
+  const logout = async (): Promise<void> => {
+    try {
+      await supabase.auth.signOut();
+      setUser(null);
+    } catch (error) {
+      console.error("Çıkış hatası:", error);
+    }
   };
 
   return (
@@ -110,6 +202,7 @@ export function useAuth() {
   }
   return context;
 }
+
 
 
 

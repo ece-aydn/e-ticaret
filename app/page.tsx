@@ -559,7 +559,6 @@ export default function Home() {
       "designer": ["tasarim", "tasarımcı", "design"],
       "design": ["tasarim", "tasarım", "designer"],
       "developer": ["gelistirici", "geliştirici", "programci", "programcı"],
-      "developer": ["gelistirici", "geliştirici", "programci", "programcı"],
       "frontend": ["frontend", "on yuz", "ön yüz"],
       "backend": ["backend", "arka plan", "arkaplan"],
       "ui": ["ui", "arayuz", "arayüz", "kullanici arayuzu"],
@@ -828,6 +827,12 @@ export default function Home() {
 
   // Klavye ile navigasyon
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    // Enter'a basıldığında dropdown'u kapatma (akıllı öneriler gösteriliyorsa)
+    if (e.key === "Enter" && showSmartSuggestions) {
+      e.preventDefault();
+      return;
+    }
+    
     if (e.key === "ArrowDown") {
       e.preventDefault();
       setSelectedSuggestionIndex(prev => 
@@ -1170,12 +1175,6 @@ export default function Home() {
                       setDetectedCity("");
                       setDetectedWorkType("");
                       setShowSuggestions(newQuery.trim().length > 0);
-                    }
-                  }}
-                  onKeyDown={(e) => {
-                    // Enter'a basıldığında dropdown'u kapatma
-                    if (e.key === "Enter" && showSmartSuggestions) {
-                      e.preventDefault();
                     }
                   }}
                   onFocus={() => {

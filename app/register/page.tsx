@@ -8,6 +8,7 @@ import { useAuth } from "../contexts/AuthContext";
 export default function RegisterPage() {
   const [formData, setFormData] = useState({
     name: "",
+    surname: "",
     email: "",
     password: "",
     confirmPassword: "",
@@ -30,6 +31,16 @@ export default function RegisterPage() {
     setError("");
 
     // Validasyon
+    if (formData.role === "student" && !formData.surname.trim()) {
+      setError("Lütfen soyadınızı girin!");
+      return;
+    }
+
+    if (!formData.name.trim()) {
+      setError("Lütfen adınızı girin!");
+      return;
+    }
+
     if (formData.password !== formData.confirmPassword) {
       setError("Şifreler eşleşmiyor!");
       return;
@@ -43,10 +54,12 @@ export default function RegisterPage() {
     setIsLoading(true);
 
     try {
+      // Öğrenci için ad ve soyadı ayrı gönder, şirket için sadece name
       const success = await register(
         formData.email,
         formData.password,
         formData.name,
+        formData.role === "student" ? formData.surname : undefined,
         formData.role
       );
       if (success) {
@@ -105,7 +118,7 @@ export default function RegisterPage() {
               <div className="grid grid-cols-2 gap-3">
                 <button
                   type="button"
-                  onClick={() => setFormData({ ...formData, role: "student" })}
+                  onClick={() => setFormData({ ...formData, role: "student", surname: formData.role === "company" ? "" : formData.surname })}
                   className={`rounded-lg border-2 px-4 py-3 text-sm font-semibold transition-all ${
                     formData.role === "student"
                       ? "border-cyan-500 dark:border-cyan-400 bg-cyan-50 dark:bg-cyan-900/20 text-cyan-700 dark:text-cyan-300"
@@ -116,7 +129,7 @@ export default function RegisterPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setFormData({ ...formData, role: "company" })}
+                  onClick={() => setFormData({ ...formData, role: "company", surname: "" })}
                   className={`rounded-lg border-2 px-4 py-3 text-sm font-semibold transition-all ${
                     formData.role === "company"
                       ? "border-cyan-500 dark:border-cyan-400 bg-cyan-50 dark:bg-cyan-900/20 text-cyan-700 dark:text-cyan-300"
@@ -128,23 +141,62 @@ export default function RegisterPage() {
               </div>
             </div>
 
-            <div>
-              <label
-                htmlFor="name"
-                className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2"
-              >
-                {formData.role === "student" ? "Ad Soyad" : "Şirket Adı"}
-              </label>
-              <input
-                id="name"
-                type="text"
-                value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                required
-                className="w-full rounded-lg border border-slate-300 dark:border-white/20 bg-white dark:bg-slate-800 px-4 py-3 text-slate-900 dark:text-white placeholder-slate-400 focus:border-cyan-500 dark:focus:border-cyan-400 focus:ring-2 focus:ring-cyan-500/20 dark:focus:ring-cyan-400/20 outline-none transition-all"
-                placeholder={formData.role === "student" ? "Ahmet Yılmaz" : "Tech Corp"}
-              />
-            </div>
+            {formData.role === "student" ? (
+              <>
+                <div>
+                  <label
+                    htmlFor="name"
+                    className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2"
+                  >
+                    Ad
+                  </label>
+                  <input
+                    id="name"
+                    type="text"
+                    value={formData.name}
+                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                    required
+                    className="w-full rounded-lg border border-slate-300 dark:border-white/20 bg-white dark:bg-slate-800 px-4 py-3 text-slate-900 dark:text-white placeholder-slate-400 focus:border-cyan-500 dark:focus:border-cyan-400 focus:ring-2 focus:ring-cyan-500/20 dark:focus:ring-cyan-400/20 outline-none transition-all"
+                    placeholder="Ahmet"
+                  />
+                </div>
+                <div>
+                  <label
+                    htmlFor="surname"
+                    className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2"
+                  >
+                    Soyad
+                  </label>
+                  <input
+                    id="surname"
+                    type="text"
+                    value={formData.surname}
+                    onChange={(e) => setFormData({ ...formData, surname: e.target.value })}
+                    required
+                    className="w-full rounded-lg border border-slate-300 dark:border-white/20 bg-white dark:bg-slate-800 px-4 py-3 text-slate-900 dark:text-white placeholder-slate-400 focus:border-cyan-500 dark:focus:border-cyan-400 focus:ring-2 focus:ring-cyan-500/20 dark:focus:ring-cyan-400/20 outline-none transition-all"
+                    placeholder="Yılmaz"
+                  />
+                </div>
+              </>
+            ) : (
+              <div>
+                <label
+                  htmlFor="name"
+                  className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2"
+                >
+                  Şirket Adı
+                </label>
+                <input
+                  id="name"
+                  type="text"
+                  value={formData.name}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  required
+                  className="w-full rounded-lg border border-slate-300 dark:border-white/20 bg-white dark:bg-slate-800 px-4 py-3 text-slate-900 dark:text-white placeholder-slate-400 focus:border-cyan-500 dark:focus:border-cyan-400 focus:ring-2 focus:ring-cyan-500/20 dark:focus:ring-cyan-400/20 outline-none transition-all"
+                  placeholder="Tech Corp"
+                />
+              </div>
+            )}
 
             <div>
               <label
